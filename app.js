@@ -242,8 +242,8 @@
       } else {
         state.problem = "تعذّر تحميل البيانات (" + (e.message || "خطأ") + ").";
       }
-      if (state.snap) showApp();
-      paintTop();
+      if (state.snap) { showApp(); paintTop(); }
+      else if (!(e instanceof AuthError)) showLogin(state.problem);
     } finally {
       state.busy = false;
       $("refresh").classList.remove("spin");

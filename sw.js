@@ -1,5 +1,5 @@
 // Service worker: يخزّن ملفات الواجهة فقط ليفتح الموقع بسرعة. بيانات المعاملات تأتي دائماً من Drive.
-const VERSION = "ashyad-v1";
+const VERSION = "ashyad-v2";
 const FILES = ["./", "index.html", "style.css", "app.js", "config.js", "manifest.webmanifest",
   "icon-192.png", "logo.png"];
 
