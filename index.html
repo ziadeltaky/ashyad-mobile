@@ -8,7 +8,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="أشياد">
-  <title>أشياد - المعاملات</title>
+  <title>أشياد</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon-192.png">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -48,13 +48,21 @@
     <main id="view" class="view"></main>
 
     <nav class="tabs" aria-label="التنقل">
-      <button data-tab="stages" class="tab on" type="button">
+      <button data-tab="home" class="tab on" type="button">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h5v-6h4v6h5V10"/></svg>
+        <span>الرئيسية</span>
+      </button>
+      <button data-tab="stages" class="tab" type="button">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h3M14 12h3"/></svg>
         <span>المراحل</span>
       </button>
       <button data-tab="list" class="tab" type="button">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
         <span>المعاملات</span>
+      </button>
+      <button data-tab="requests" class="tab" type="button">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v13H8l-4 4z"/><path d="M8 9h8M8 13h5"/></svg>
+        <span>طلباتي</span>
       </button>
     </nav>
   </div>
@@ -68,6 +76,10 @@
   <div id="toast" class="toast" hidden></div>
 
   <script src="config.js"></script>
+  <script src="jszip.min.js"></script>
+  <script src="xlsxtools.js"></script>
+  <script src="consultant.js"></script>
+  <script src="outage.js"></script>
   <script src="app.js"></script>
   <script src="https://accounts.google.com/gsi/client" async defer onload="window.__gsiReady && window.__gsiReady()"></script>
 </body>

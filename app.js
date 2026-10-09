@@ -3,8 +3,8 @@
   "use strict";
 
   const CFG = window.ASHYAD_CONFIG || {};
-  const SCOPE = "https://www.googleapis.com/auth/drive.readonly";
-  const KEY = { snap: "ashyad.snapshot", file: "ashyad.fileId", signed: "ashyad.signed", tab: "ashyad.tab", stage: "ashyad.stage" };
+  const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly";
+  const KEY = { snap: "ashyad.snapshot", file: "ashyad.fileId", signed: "ashyad.signed", tab: "ashyad.tab", stage: "ashyad.stage", tok: "ashyad.token", reqs: "ashyad.requests" };
   const PAGE = 60;
 
   const PHASE_COLORS = {
@@ -98,7 +98,7 @@
     steps: new Map(),
     main: [],
     rows: [],
-    tab: store.get(KEY.tab) === "list" ? "list" : "stages",
+    tab: "home",
     stage: store.get(KEY.stage) || "",
     query: "",
     shown: PAGE,
@@ -129,54 +129,46 @@
 
   // ------------------------------------------------------------------ Google sign in (token only, read-only Drive)
 
-  let tokenClient = null;
   let token = "";
   let tokenExp = 0;
-  let pending = null;
+  let allowRedirect = false;
 
-  function initAuth() {
-    if (tokenClient || !CFG.clientId || !window.google?.accounts?.oauth2) return;
-    tokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: CFG.clientId,
-      scope: SCOPE,
-      callback: (resp) => {
-        const p = pending; pending = null;
-        if (resp.error) { p?.reject(new Error(resp.error)); return; }
-        token = resp.access_token;
-        tokenExp = Date.now() + (Number(resp.expires_in || 3600) - 90) * 1000;
-        store.set(KEY.signed, "1");
-        p?.resolve(token);
-      },
-      error_callback: (err) => {
-        const p = pending; pending = null;
-        p?.reject(new Error(err?.type || "popup"));
-      }
+  const redirectUri = () => CFG.redirectUri || (location.origin + location.pathname.replace(/index\.html$/, ""));
+
+  function startRedirect(prompt) {
+    const q = new URLSearchParams({
+      client_id: CFG.clientId, redirect_uri: redirectUri(), response_type: "token", scope: SCOPE,
+      include_granted_scopes: "true", state: "ashyad"
     });
+    if (prompt) q.set("prompt", prompt);
+    location.href = "https://accounts.google.com/o/oauth2/v2/auth?" + q.toString();
+    return new Promise(() => { /* page navigates away */ });
   }
 
-  window.__gsiReady = initAuth;
+  // reads the token Google puts in the URL after the redirect; returns an error text or ""
+  function takeRedirectResult() {
+    const h = new URLSearchParams(location.hash.replace(/^#/, ""));
+    if (!h.get("access_token") && !h.get("error")) return "";
+    history.replaceState(null, "", location.pathname + location.search);
+    if (h.get("error")) return "تعذّر تسجيل الدخول (" + h.get("error") + ").";
+    token = h.get("access_token");
+    tokenExp = Date.now() + (Number(h.get("expires_in") || 3600) - 90) * 1000;
+    store.set(KEY.tok, JSON.stringify({ t: token, e: tokenExp, s: h.get("scope") || "" }));
+    store.set(KEY.signed, "1");
+    return "";
+  }
 
-  function waitForGoogle() {
-    return new Promise((resolve, reject) => {
-      let waited = 0;
-      const tick = () => {
-        initAuth();
-        if (tokenClient) return resolve();
-        waited += 150;
-        if (waited > 10000) return reject(new Error("gsi"));
-        setTimeout(tick, 150);
-      };
-      tick();
-    });
+  function loadSavedToken() {
+    try {
+      const o = JSON.parse(store.get(KEY.tok) || "null");
+      if (o && o.e > Date.now() && /drive\.file/.test(o.s || "")) { token = o.t; tokenExp = o.e; }
+    } catch (_) { /* ignore */ }
   }
 
   async function getToken(prompt) {
     if (token && Date.now() < tokenExp) return token;
-    await waitForGoogle();
-    return new Promise((resolve, reject) => {
-      pending = { resolve, reject };
-      tokenClient.requestAccessToken({ prompt: prompt ?? "" });
-    });
+    if (!allowRedirect) throw new Error("expired");
+    return startRedirect(prompt || "");
   }
 
   class AuthError extends Error {}
@@ -218,6 +210,7 @@
   async function refresh(manual, prompt) {
     if (state.busy) return;
     state.busy = true;
+    allowRedirect = !!manual;
     $("refresh").classList.add("spin");
     try {
       const snap = await loadFromDrive(prompt);
@@ -227,8 +220,9 @@
       setSnapshot(snap);
       store.set(KEY.snap, JSON.stringify(snap));
       showApp();
-      if (changed) render();
+      if (changed && !(window.ASHYAD_TOOLS || {})[state.tab]) render();
       else paintTop();
+      flushRequests(true);
       if (manual) toast(changed ? "تم تحديث البيانات" : "البيانات محدّثة، لا جديد");
     } catch (e) {
       if (e instanceof AuthError) {
@@ -266,10 +260,12 @@
     $("app").hidden = false;
   }
 
+  const TITLES = { stages: "مراحل المعاملات", list: "قائمة المعاملات", requests: "طلباتي" };
+
   function paintTop() {
     const banner = $("banner");
     const when = fmtTime(state.snap?.generatedAt);
-    $("top-sub").textContent = when ? "بيانات " + when : "مراحل المعاملات";
+    $("top-sub").textContent = state.tab === "home" ? (when ? "بيانات " + when : "الرئيسية") : (TITLES[state.tab] || (window.ASHYAD_TOOLS || {})[state.tab]?.title || "");
 
     let text = state.problem;
     let err = !!text;
@@ -288,7 +284,11 @@
     const view = $("view");
     view.replaceChildren();
     if (!state.snap) return;
-    if (state.tab === "stages") renderStages(view);
+    const tool = (window.ASHYAD_TOOLS || {})[state.tab];
+    if (state.tab === "home") renderHome(view);
+    else if (state.tab === "stages") renderStages(view);
+    else if (state.tab === "requests") renderRequests(view);
+    else if (tool) tool.render(view, api());
     else renderList(view);
   }
 
@@ -386,6 +386,218 @@
     paint();
   }
 
+  // ------------------------------------------------------------------ home
+
+  const HOME_TILES = [
+    { key: "stages", title: "مراحل المعاملات", sub: "المعاملات حسب كل مرحلة", c1: "#3B1FA0", c2: "#6A4BE0",
+      ico: '<circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h3M14 12h3"/>' },
+    { key: "list", title: "قائمة المعاملات", sub: "بحث وتفاصيل كل معاملة", c1: "#0E7C9B", c2: "#27B3D6",
+      ico: '<path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>' },
+    { key: "requests", title: "طلباتي", sub: "طلبات التقديم والإرجاع وحالتها", c1: "#C2410C", c2: "#FB8912",
+      ico: '<path d="M4 4h16v13H8l-4 4z"/><path d="M8 9h8M8 13h5"/>' },
+    { key: "consultant", title: "جدول الاستشاري", sub: "التصميم الفني وأرابتك، ملف Excel", c1: "#1D4ED8", c2: "#5B8DEF",
+      ico: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>' },
+    { key: "outage", title: "جدولة التطفئة", sub: "جدول D9 جاهز للإرسال", c1: "#B7791F", c2: "#F5B73D",
+      ico: '<path d="M13 2.5L5.5 13H11l-1 8.5L18.5 10.5H13z"/>' }
+  ];
+
+  function renderHome(view) {
+    const total = state.rows.length;
+    const stale = state.rows.filter((r) => r.t.isStale).length;
+    const pending = myRequests().filter((r) => !decided(r)).length;
+
+    view.append(el("div", { class: "hello" },
+      el("div", { class: "hello-t" }, el("strong", { text: "أهلاً بك" }), el("span", { text: "اختر القسم الذي تريده" })),
+      el("div", { class: "hello-s" },
+        el("div", {}, el("b", { text: total }), el("span", { text: "معاملة" })),
+        el("div", { class: stale ? "warn" : "" }, el("b", { text: stale }), el("span", { text: "راكدة" })))));
+
+    const grid = el("div", { class: "tiles" });
+    HOME_TILES.forEach((t, i) => {
+      const ready = ["stages", "list", "requests"].includes(t.key) || !!(window.ASHYAD_TOOLS || {})[t.key];
+      const badge = t.key === "requests" && pending ? el("em", { class: "badge", text: pending }) : null;
+      const tile = el("button", {
+        type: "button", class: "tile" + (ready ? "" : " soon"), style: `--c1:${t.c1};--c2:${t.c2};animation-delay:${i * 70}ms`,
+        onclick: (e) => {
+          if (!ready) { toast("هذا القسم قريباً"); return; }
+          ripple(e);
+          setTimeout(() => go(t.key), 140);
+        }
+      }, badge, el("span", { class: "tile-ico" }, svg(t.ico, 30)), el("strong", { text: t.title }), el("small", { text: ready ? t.sub : "قريباً" }));
+      grid.append(tile);
+    });
+    view.append(grid);
+  }
+
+  function ripple(e) {
+    const b = e.currentTarget;
+    const r = b.getBoundingClientRect();
+    const d = Math.max(r.width, r.height);
+    const dot = el("i", { class: "rip", style: `width:${d}px;height:${d}px;left:${e.clientX - r.left - d / 2}px;top:${e.clientY - r.top - d / 2}px` });
+    b.append(dot);
+    setTimeout(() => dot.remove(), 600);
+  }
+
+  function go(tab) {
+    state.tab = tab;
+    state.shown = PAGE;
+    render();
+    $("view").scrollTop = 0;
+  }
+
+  // ------------------------------------------------------------------ requests (advance / go back)
+
+  const STATUS_TEXT = {
+    pending: ["بانتظار قرار الديسك توب", "wait"], applied: ["تم التنفيذ", "ok"], rejected: ["مرفوض", "no"], outdated: ["متقادم", "old"]
+  };
+
+  function myRequests() {
+    try { return JSON.parse(store.get(KEY.reqs) || "[]"); } catch (_) { return []; }
+  }
+  function saveRequests(list) {
+    const cutoff = Date.now() - 45 * 86400000;
+    store.set(KEY.reqs, JSON.stringify(list.filter((r) => new Date(r.createdAt).getTime() > cutoff).slice(-80)));
+  }
+  function serverStatus(r) { return (state.snap?.requests || []).find((q) => q.id === r.id); }
+  function decided(r) { const q = serverStatus(r); return !!q && q.status !== "pending"; }
+
+  function newId() {
+    if (window.crypto?.randomUUID) return crypto.randomUUID().replace(/-/g, "");
+    return Array.from({ length: 4 }, () => Math.random().toString(16).slice(2, 10)).join("");
+  }
+
+  function localIso() {
+    const d = new Date(), p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  }
+
+  function makeRequest(t, action, note) {
+    const back = action === "back";
+    return {
+      id: newId(), transactionId: t.id, code: t.code, action,
+      fromStepId: t.stepId || "", fromName: t.stepName || "",
+      toStepId: (back ? t.prevId : t.nextId) || "", toName: (back ? t.prevName : t.nextName) || "",
+      note: back ? note : "", createdAt: localIso(), sent: false
+    };
+  }
+
+  async function sendRequest(r) {
+    const owner = state.snap?.ownerEmail;
+    if (!owner) throw new Error("لا يوجد حساب مستلم في البيانات. حدّث البيانات ثم أعد المحاولة.");
+    allowRedirect = false;
+    const t = await getToken("");
+    const payload = { ...r }; delete payload.sent; delete payload.fileId;
+    const boundary = "ashyad" + newId();
+    const meta = JSON.stringify({ name: `ashyad-req-${r.id}.json`, mimeType: "application/json" });
+    const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(payload)}\r\n--${boundary}--`;
+    const up = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", {
+      method: "POST", headers: { Authorization: "Bearer " + t, "Content-Type": "multipart/related; boundary=" + boundary }, body
+    });
+    if (up.status === 401 || up.status === 403) { token = ""; throw new Error("expired"); }
+    if (!up.ok) throw new Error("http " + up.status);
+    const id = (await up.json()).id;
+    const share = await fetch(`https://www.googleapis.com/drive/v3/files/${id}/permissions?sendNotificationEmail=false`, {
+      method: "POST", headers: { Authorization: "Bearer " + t, "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "reader", type: "user", emailAddress: owner })
+    });
+    if (!share.ok) throw new Error("share " + share.status);
+    return id;
+  }
+
+  let flushing = false;
+  async function flushRequests(quiet) {
+    if (flushing) return;
+    const list = myRequests();
+    if (!list.some((r) => !r.sent)) return;
+    flushing = true;
+    try {
+      for (const r of list.filter((x) => !x.sent)) {
+        try {
+          r.fileId = await sendRequest(r);
+          r.sent = true;
+          saveRequests(list);
+          if (!quiet) toast("تم إرسال الطلب إلى الديسك توب");
+        } catch (e) {
+          if (!quiet) toast(e.message === "expired" ? "انتهت الجلسة. اضغط التحديث لتسجيل الدخول ثم يُرسل الطلب." :
+            /^(share|http)/.test(e.message) ? "تعذّر إرسال الطلب (" + e.message + ")" : e.message === "Failed to fetch" ? "لا يوجد اتصال. سيُرسل الطلب عند توفر الإنترنت." : e.message);
+          break;
+        }
+      }
+    } finally {
+      flushing = false;
+      if (state.tab === "requests") render();
+    }
+  }
+
+  function renderRequests(view) {
+    const list = myRequests().slice().reverse();
+    if (!list.length) {
+      view.append(el("div", { class: "empty" }, icon.inbox(), el("p", { text: "لا توجد طلبات بعد." }),
+        el("small", { text: "افتح أي معاملة واضغط «طلب تقديم» أو «طلب إرجاع»." })));
+      return;
+    }
+    view.append(el("div", { class: "count", text: "اضغط زر التحديث بالأعلى لمعرفة قرار الديسك توب." }));
+    const wrap = el("div", { class: "cards" });
+    list.forEach((r, i) => {
+      const q = serverStatus(r);
+      const [text, cls] = q ? (STATUS_TEXT[q.status] || ["", "wait"]) : (r.sent ? ["تم الإرسال، بانتظار وصوله", "wait"] : ["لم يُرسل بعد (بانتظار الإنترنت)", "queue"]);
+      wrap.append(el("div", { class: "rq", style: `animation-delay:${Math.min(i, 8) * 30}ms` },
+        el("div", { class: "rq-top" }, el("b", { text: r.code }), el("span", { class: "chip2 " + cls, text: text })),
+        el("div", { class: "rq-mid", text: (r.action === "back" ? "إرجاع" : "تقديم") + `: «${r.fromName || "—"}» ← «${r.toName}»` }),
+        r.action === "back" && r.note ? el("div", { class: "rq-note", text: "السبب: " + r.note }) : null,
+        q?.note ? el("div", { class: "rq-note dec", text: "ملاحظة الديسك توب: " + q.note }) : null,
+        el("div", { class: "rq-time", text: fmtTime(r.createdAt.slice(0, 19)) }),
+        !r.sent && !q ? el("button", { class: "mini", type: "button", text: "إرسال الآن", onclick: () => flushRequests(false) }) : null));
+    });
+    view.append(wrap);
+  }
+
+  function requestPanel(t) {
+    const box = el("div", { class: "panel req" }, el("h3", { text: "طلب تغيير المرحلة" }));
+    const open = myRequests().find((r) => r.transactionId === t.id && !decided(r));
+    if (open) {
+      box.append(el("div", { class: "req-open", text: `لديك طلب ${open.action === "back" ? "إرجاع" : "تقديم"} قيد الانتظار لهذه المعاملة.` }));
+      return box;
+    }
+    if (!t.nextId && !t.prevId) {
+      box.append(el("div", { class: "count", text: "لا توجد مرحلة تالية أو سابقة متاحة." }));
+      return box;
+    }
+    const form = el("div", { class: "req-form" });
+    const buttons = el("div", { class: "req-btns" });
+    const choose = (action) => {
+      buttons.hidden = true;
+      form.replaceChildren();
+      const back = action === "back";
+      const reason = back ? el("textarea", { rows: "3", maxlength: "400", "aria-label": "سبب الإرجاع", }) : null;
+      const send = el("button", { type: "button", class: "btn-main", text: "إرسال الطلب" });
+      if (back) { send.disabled = true; reason.addEventListener("input", () => { send.disabled = reason.value.trim().length < 3; }); }
+      send.addEventListener("click", async () => {
+        send.disabled = true;
+        const list = myRequests();
+        list.push(makeRequest(t, action, back ? reason.value.trim() : ""));
+        saveRequests(list);
+        const sheetPanel = $("sheet").querySelector(".sheet-panel");
+        sheetPanel.replaceChildren(buildSheet(t));
+        await flushRequests(false);
+        if (!state.snap) return;
+        paintTop();
+      });
+      form.append(
+        el("div", { class: "req-ask", text: back ? `إرجاع من «${t.stepName}» إلى «${t.prevName}»` : `تقديم من «${t.stepName}» إلى «${t.nextName}»` }),
+        reason,
+        el("div", { class: "req-btns" }, send, el("button", { type: "button", class: "btn-ghost", text: "إلغاء", onclick: () => { form.replaceChildren(); buttons.hidden = false; } })));
+    };
+    if (t.nextId) buttons.append(el("button", { type: "button", class: "btn-main", text: "طلب تقديم إلى «" + t.nextName + "»", onclick: () => choose("advance") }));
+    if (t.prevId) buttons.append(el("button", { type: "button", class: "btn-ghost warn", text: "طلب إرجاع إلى «" + t.prevName + "»", onclick: () => choose("back") }));
+    box.append(buttons, form, el("div", { class: "count", text: "الطلب يصل إلى الديسك توب ويُنفَّذ بعد موافقة المسؤول." }));
+    return box;
+  }
+
+  function api() {
+    return { el, svg, icon, store, toast, norm, state, fmtTime, trimNum, go, ripple, KEY, myRequests };
+  }
+
   // ---- details sheet
 
   function openSheet(t) {
@@ -428,6 +640,8 @@
         el("div", { class: "fact" + (wide ? " wide" : "") }, el("span", { text: k }), el("b", { text: v }))))));
 
     if (t.notes) body.append(el("div", { class: "panel" }, el("h3", { text: "ملاحظات" }), el("div", { class: "notes", text: t.notes })));
+
+    body.append(requestPanel(t));
 
     const map = mapLink(t);
     if (map) body.append(el("a", { class: "map-btn", href: map, target: "_blank", rel: "noopener noreferrer" }, icon.pin(), "فتح الموقع على الخريطة"));
@@ -472,24 +686,15 @@
     document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => {
       state.tab = b.dataset.tab;
       state.shown = PAGE;
-      store.set(KEY.tab, state.tab);
       render();
       $("view").scrollTop = 0;
     }));
 
     $("refresh").addEventListener("click", () => refresh(true, ""));
-    $("signin").addEventListener("click", async () => {
-      const m = $("login-msg");
-      m.textContent = "";
+    $("signin").addEventListener("click", () => {
+      $("login-msg").textContent = "";
       $("signin").disabled = true;
-      try {
-        await getToken("select_account");
-        await refresh(true, "");
-      } catch (e) {
-        const text = e.message === "gsi" ? "تعذّر تحميل خدمة جوجل. تحقق من الإنترنت." :
-          /access_denied|popup_closed/.test(e.message) ? "لم يكتمل تسجيل الدخول." : "تعذّر تسجيل الدخول (" + e.message + ").";
-        showLogin(text);
-      }
+      startRedirect("select_account");
     });
 
     $("sheet").addEventListener("click", (e) => { if (e.target.hasAttribute("data-close")) history.back(); });
@@ -499,12 +704,13 @@
     document.querySelector(".top-logo").addEventListener("click", () => {
       if (!confirm("تسجيل الخروج من هذا الجهاز؟")) return;
       try { if (token && window.google?.accounts?.oauth2) google.accounts.oauth2.revoke(token); } catch (_) { /* ignore */ }
-      token = "";
-      [KEY.snap, KEY.file, KEY.signed].forEach((k) => store.del(k));
+      token = ""; tokenExp = 0;
+      [KEY.snap, KEY.file, KEY.signed, KEY.tok].forEach((k) => store.del(k));
       state.snap = null;
       showLogin("تم تسجيل الخروج.", true);
     });
 
+    window.addEventListener("online", () => flushRequests(false));
     const every = Math.max(1, Number(CFG.refreshMinutes) || 5) * 60000;
     setInterval(() => { if (!document.hidden && state.snap && store.get(KEY.signed)) refresh(false, ""); }, every);
     document.addEventListener("visibilitychange", () => {
@@ -526,6 +732,9 @@
       return;
     }
 
+    loadSavedToken();
+    const authErr = takeRedirectResult();
+
     let cached = null;
     try { cached = JSON.parse(store.get(KEY.snap) || "null"); } catch (_) { cached = null; }
     if (cached && cached.transactions) {
@@ -533,10 +742,14 @@
       showApp();
       render();
     } else {
-      showLogin("");
+      showLogin(authErr);
     }
 
-    if (store.get(KEY.signed)) refresh(false, "");
+    if (store.get(KEY.signed) && token) refresh(false, "");
+    else if (store.get(KEY.signed) && cached && navigator.onLine !== false) {
+      state.problem = "انتهت جلسة الدخول. اضغط زر التحديث لتسجيل الدخول وتحديث البيانات.";
+      paintTop();
+    }
   }
 
   boot();
