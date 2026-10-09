@@ -1,7 +1,7 @@
 // Service worker: يخزّن ملفات الواجهة فقط ليفتح الموقع بسرعة. بيانات المعاملات تأتي دائماً من Drive.
-const VERSION = "ashyad-v6";
+const VERSION = "ashyad-v8";
 const FILES = ["./", "index.html", "style.css", "app.js", "config.js", "manifest.webmanifest",
-  "icon-192.png", "logo.png", "jszip.min.js", "xlsxtools.js", "consultant.js", "outage.js", "photos.js",
+  "icon-192.png", "logo.png", "jszip.min.js", "xlsxtools.js", "consultant.js", "outage.js", "photos.js", "reports.js",
   "consultant_design.xlsx", "consultant_arabtec.xlsx", "outage_d9.xlsx"];
 
 self.addEventListener("install", (e) => {

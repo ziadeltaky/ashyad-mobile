@@ -220,7 +220,8 @@
       setSnapshot(snap);
       store.set(KEY.snap, JSON.stringify(snap));
       showApp();
-      if (changed && !(window.ASHYAD_TOOLS || {})[state.tab]) render();
+      const liveTool = (window.ASHYAD_TOOLS || {})[state.tab];
+      if (changed && (!liveTool || liveTool.live)) render();
       else paintTop();
       flushRequests(true);
       if (window.AshyadPhotos) { AshyadPhotos.flush(true); AshyadPhotos.reconcile(snap); }
@@ -408,6 +409,10 @@
       ico: '<path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>' },
     { key: "requests", title: "طلباتي", sub: "طلبات التقديم والإرجاع وحالتها", c1: "#C2410C", c2: "#FB8912",
       ico: '<path d="M4 4h16v13H8l-4 4z"/><path d="M8 9h8M8 13h5"/>' },
+    { key: "violations", title: "المخالفات", sub: "الحالة والمبالغ وصور المخالفة", c1: "#B91C1C", c2: "#F26D5B",
+      ico: '<path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17.5v.5"/>' },
+    { key: "quantities", title: "الكميات", sub: "الأمتار وحجم الحفر حسب الشهر", c1: "#0F766E", c2: "#34C3A8",
+      ico: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>' },
     { key: "consultant", title: "جدول الاستشاري", sub: "التصميم الفني وأرابتك، ملف Excel", c1: "#1D4ED8", c2: "#5B8DEF",
       ico: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>' },
     { key: "outage", title: "جدولة التطفئة", sub: "جدول D9 جاهز للإرسال", c1: "#B7791F", c2: "#F5B73D",
@@ -415,31 +420,49 @@
   ];
 
   function renderHome(view) {
-    const total = state.rows.length;
-    const stale = state.rows.filter((r) => r.t.isStale).length;
+    const rows = state.rows;
+    const total = rows.length;
+    const stale = rows.filter((r) => r.t.isStale).length;
+    const done = rows.filter((r) => r.t.inspectionDone).length;
     const pending = myRequests().filter((r) => !decided(r)).length;
 
-    view.append(el("div", { class: "hello" },
-      el("div", { class: "hello-t" }, el("strong", { text: "أهلاً بك" }), el("span", { text: "اختر القسم الذي تريده" })),
-      el("div", { class: "hello-s" },
-        el("div", {}, el("b", { text: total }), el("span", { text: "معاملة" })),
-        el("div", { class: stale ? "warn" : "" }, el("b", { text: stale }), el("span", { text: "راكدة" })))));
+    // the pipeline: every transaction as a slice of its phase colour, in stage order
+    const order = [];
+    state.main.forEach((s) => { if (!order.includes(s.phase)) order.push(s.phase); });
+    rows.forEach((r) => { if (!order.includes(r.t.phase)) order.push(r.t.phase); });
+    const byPhase = order.map((p) => ({ p, n: rows.filter((r) => r.t.phase === p).length })).filter((x) => x.n > 0);
+    const biggest = rows.length ? Object.entries(rows.reduce((m, r) => (m[r.t.stepName] = (m[r.t.stepName] || 0) + 1, m), {})).sort((a, b) => b[1] - a[1])[0] : null;
 
-    const grid = el("div", { class: "tiles" });
+    const hero = el("button", { type: "button", class: "hero", "aria-label": "مراحل المعاملات", onclick: () => go("stages") },
+      el("div", { class: "hero-k", text: "المعاملات الجارية" }),
+      el("div", { class: "hero-n" }, String(total), el("small", { text: "معاملة" })),
+      el("div", { class: "pipe" }, byPhase.map((x, i) => el("i", { style: `--w:${x.n};--c:${color(x.p)};--i:${i}` }))),
+      el("div", { class: "pipe-cap" }, el("span", { text: biggest ? `الأكثر في «${biggest[0]}» (${biggest[1]})` : "" }), el("span", { text: "المراحل ←" })));
+
+    const R = 12, C = 2 * Math.PI * R, frac = total ? done / total : 0;
+    const ring = svg(`<circle class="bg" cx="15" cy="15" r="${R}"/><circle class="fg" cx="15" cy="15" r="${R}" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - frac)}"/>`, 30);
+    ring.setAttribute("class", "ring");
+    ring.setAttribute("viewBox", "0 0 30 30");
+
+    const kpi = (cls, n, label, fn, extra, i) => el("button", { type: "button", class: "kpi " + cls, style: `animation-delay:${120 + i * 70}ms`, onclick: fn }, extra, el("b", { text: n }), el("span", { text: label }));
+    const kpis = el("div", { class: "kpis" },
+      kpi("", done, `ممسوحة من ${total}`, () => { state.scan = "done"; go("list"); }, ring, 0),
+      kpi(stale ? "warn" : "", stale, `راكدة (+${state.snap.staleDays || 7} يوم)`, () => go("stages"), null, 1),
+      kpi("", pending, "طلباتي المعلّقة", () => go("requests"), pending ? el("em", { text: "!" }) : null, 2));
+
+    const menu = el("div", { class: "menu" });
     HOME_TILES.forEach((t, i) => {
       const ready = ["stages", "list", "requests"].includes(t.key) || !!(window.ASHYAD_TOOLS || {})[t.key];
-      const badge = t.key === "requests" && pending ? el("em", { class: "badge", text: pending }) : null;
-      const tile = el("button", {
-        type: "button", class: "tile" + (ready ? "" : " soon"), style: `--c1:${t.c1};--c2:${t.c2};animation-delay:${i * 70}ms`,
-        onclick: (e) => {
-          if (!ready) { toast("هذا القسم قريباً"); return; }
-          ripple(e);
-          setTimeout(() => go(t.key), 140);
-        }
-      }, badge, el("span", { class: "tile-ico" }, svg(t.ico, 30)), el("strong", { text: t.title }), el("small", { text: ready ? t.sub : "قريباً" }));
-      grid.append(tile);
+      menu.append(el("button", {
+        type: "button", class: "row", style: `--c1:${t.c1};--c2:${t.c2};animation-delay:${260 + i * 60}ms`,
+        onclick: (e) => { if (!ready) { toast("هذا القسم قريباً"); return; } ripple(e); setTimeout(() => go(t.key), 120); }
+      }, el("span", { class: "ri" }, svg(t.ico, 24)),
+        el("span", { class: "rt" }, el("strong", { text: t.title }), el("small", { text: ready ? t.sub : "قريباً" })),
+        svg('<path d="M15 6l-6 6 6 6"/>', 20)));
     });
-    view.append(grid);
+    menu.querySelectorAll(".row > svg").forEach((s) => s.classList.add("chev"));
+
+    view.append(el("div", { class: "dash" }, hero, kpis, el("div", { class: "sec-t", text: "الأقسام" }), menu));
   }
 
   function ripple(e) {
@@ -456,6 +479,7 @@
     state.shown = PAGE;
     render();
     $("view").scrollTop = 0;
+    if (tab === "requests" && state.snap && Date.now() - state.lastFetch > 15000) refresh(false, "");
   }
 
   // ------------------------------------------------------------------ requests (advance / go back)
@@ -738,7 +762,7 @@
     });
 
     window.addEventListener("online", () => flushRequests(false));
-    const every = Math.max(1, Number(CFG.refreshMinutes) || 5) * 60000;
+    const every = Math.max(1, Math.min(2, Number(CFG.refreshMinutes) || 2)) * 60000;
     setInterval(() => { if (!document.hidden && state.snap && store.get(KEY.signed)) refresh(false, ""); }, every);
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden && state.snap && store.get(KEY.signed) && Date.now() - state.lastFetch > 60000) refresh(false, "");

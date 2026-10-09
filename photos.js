@@ -5,7 +5,8 @@
 
   const LS = "ashyad.photos";
   const MIN_SURVEY = 2, MAX = 8, MAX_SIDE = 1600, QUALITY = 0.8, KEEP_DAYS = 45;
-  const KINDS = { survey: "صور المسح", general: "صور عامة" };
+  const KINDS = { survey: "صور المسح", general: "صور عامة", violation: "صور المخالفة" };
+  const THUMB = 220;
 
   let ctx = null;
   let flushing = false;
@@ -45,7 +46,7 @@
 
   // ------------------------------------------------------------------ compression
 
-  async function shrink(file) {
+  async function shrink(file, maxSide, quality) {
     let bmp;
     try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); }
     catch (_) {
@@ -56,14 +57,14 @@
         img.src = url;
       });
     }
-    const w0 = bmp.width, h0 = bmp.height, k = Math.min(1, MAX_SIDE / Math.max(w0, h0));
+    const w0 = bmp.width, h0 = bmp.height, k = Math.min(1, (maxSide || MAX_SIDE) / Math.max(w0, h0));
     const c = document.createElement("canvas");
     c.width = Math.max(1, Math.round(w0 * k)); c.height = Math.max(1, Math.round(h0 * k));
     const g = c.getContext("2d");
     g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
     g.drawImage(bmp, 0, 0, c.width, c.height);
     if (bmp.close) bmp.close();
-    return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error("encode"))), "image/jpeg", QUALITY));
+    return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error("encode"))), "image/jpeg", quality || QUALITY));
   }
 
   const newId = () => (window.crypto?.randomUUID ? crypto.randomUUID().replace(/-/g, "") :
@@ -91,7 +92,7 @@
       const boundary = "ashyad" + newId();
       const meta = JSON.stringify({
         name: `ashyad-photo-${b.id}-${item.n}.jpg`, mimeType: "image/jpeg",
-        properties: { batch: b.id, n: String(item.n), total: String(b.total), kind: b.kind, tx: b.tx, code: b.code }
+        properties: { batch: b.id, n: String(item.n), total: String(b.total), kind: b.kind, tx: b.tx, code: b.code, note: (b.comment || "").slice(0, 50) }
       });
       const body = new Blob([`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: image/jpeg\r\n\r\n`, blob, `\r\n--${boundary}--`]);
       const up = guard(await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", {
@@ -161,6 +162,7 @@
       if (b.status !== s.status || (b.note || "") !== (s.note || "")) { b.status = s.status; b.note = s.note || ""; dirty = true; }
     }
     if (dirty) saveAll();
+    pruneThumbs();
     const todo = cache.filter((b) => known.has(b.id) && !b.cleaned && b.items.every((i) => i.sent));
     if (!todo.length) return;
     cleaning = true;
@@ -183,6 +185,25 @@
     finally { cleaning = false; ctx.changed(); }
   }
 
+  /** thumbnails of batches that were dropped from the list (older than the keeping time) */
+  async function pruneThumbs() {
+    try {
+      const d = await db();
+      const alive = new Set(batches().map((b) => b.id));
+      await new Promise((res) => {
+        const st = d.transaction("blobs", "readwrite").objectStore("blobs");
+        const q = st.openCursor();
+        q.onsuccess = () => {
+          const c = q.result; if (!c) { res(); return; }
+          const m = /^th:([^:]+):/.exec(c.key);
+          if (m && !alive.has(m[1])) c.delete();
+          c.continue();
+        };
+        q.onerror = () => res();
+      });
+    } catch (_) { /* optional */ }
+  }
+
   // ------------------------------------------------------------------ status text
 
   function statusOf(b) {
@@ -201,28 +222,49 @@
     return el("div", { class: "rq", style: `animation-delay:${Math.min(i, 8) * 30}ms` },
       el("div", { class: "rq-top" }, el("b", { text: b.code }), el("span", { class: "chip2 " + cls, text })),
       el("div", { class: "rq-mid", text: `${KINDS[b.kind]}: ${b.total} صور` }),
+      b.comment ? el("div", { class: "rq-note", text: "التعليق: " + b.comment }) : null,
       b.status === "rejected" && b.note ? el("div", { class: "rq-note dec", text: "سبب الرفض: " + b.note }) : null,
-      el("div", { class: "rq-time", text: fmtTime(b.createdAt.slice(0, 19)) }));
+      el("div", { class: "rq-time", text: fmtTime(b.createdAt.slice(0, 19)) }),
+      b.items.some((i) => !i.sent) ? el("button", { class: "mini", type: "button", text: "إعادة المحاولة", onclick: () => flush(false) }) : null);
   }
 
   // ------------------------------------------------------------------ screens
 
-  function panel(t) {
+  function panel(t, kinds) {
+    kinds = kinds || ["survey", "general"];
     const { el, icon } = ctx.api();
     const box = el("div", { class: "panel photos" }, el("h3", { text: "الصور" }));
-    const btns = el("div", { class: "req-btns" },
-      el("button", { type: "button", class: "btn-main", text: "صور المسح", onclick: () => picker(t, "survey", box) }),
-      el("button", { type: "button", class: "btn-ghost", text: "صور عامة", onclick: () => picker(t, "general", box) }));
+    const btns = el("div", { class: "req-btns" }, kinds.map((k, i) =>
+      el("button", { type: "button", class: i === 0 ? "btn-main" : "btn-ghost", text: KINDS[k], onclick: () => picker(t, k, box) })));
     box.append(btns);
-    const mine = batches().filter((b) => b.tx === t.id).reverse().slice(0, 4);
+    const mine = batches().filter((b) => b.tx === t.id && kinds.includes(b.kind)).reverse().slice(0, 4);
     mine.forEach((b) => {
       const [text, cls] = statusOf(b);
-      box.append(el("div", { class: "ph-line" }, el("span", { text: `${KINDS[b.kind]} (${b.total})` }), el("span", { class: "chip2 " + cls, text })));
+      const strip = el("div", { class: "ph-strip" });
+      box.append(el("div", { class: "ph-line" }, el("span", { text: `${KINDS[b.kind]} (${b.total})` }), el("span", { class: "chip2 " + cls, text })), strip);
+      if (b.comment) box.append(el("div", { class: "rq-note", text: b.comment }));
+      b.items.forEach((i) => getBlob("th:" + b.id + ":" + i.n).then((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        strip.append(el("img", { src: url, alt: "", onclick: () => viewer(b, t) }));
+      }).catch(() => {}));
     });
     return box;
   }
 
+  /** the sent photos of one batch, larger (the copies kept on this phone) */
+  function viewer(b, t) {
+    const api = ctx.api();
+    window.AshyadX.overlay(api, `${KINDS[b.kind]} — ${t.code}`, (body) => {
+      const grid = el0(api, "div", { class: "ph-big" });
+      body.append(grid);
+      b.items.forEach((i) => getBlob("th:" + b.id + ":" + i.n).then((blob) => { if (blob) grid.append(api.el("img", { src: URL.createObjectURL(blob), alt: "" })); }).catch(() => {}));
+    });
+  }
+  const el0 = (api, tag, props) => api.el(tag, props);
+
   function picker(t, kind, host) {
+    const kinds = kind === "violation" ? ["violation"] : ["survey", "general"];
     const api = ctx.api();
     const { el, toast } = api;
     const survey = kind === "survey";
@@ -234,6 +276,7 @@
       const add = el("button", { type: "button", class: "btn-ghost", text: "إضافة صور" });
       const send = el("button", { type: "button", class: "btn-main", text: "إرسال" });
       const confirmBox = el("div", { class: "ph-confirm", hidden: "" });
+      const comment = el("input", { type: "text", maxlength: "50", "aria-label": "تعليق" });
 
       const paint = () => {
         grid.replaceChildren(...picked.map((p, i) => el("div", { class: "ph-th" },
@@ -261,19 +304,22 @@
 
       const doSend = async () => {
         send.disabled = true;
-        const b = { id: newId(), tx: t.id, code: t.code, kind, total: picked.length, createdAt: (() => {
+        const b = { id: newId(), tx: t.id, code: t.code, kind, total: picked.length, comment: comment.value.trim(), createdAt: (() => {
           const d = new Date(), p = (n) => String(n).padStart(2, "0");
           return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
         })(), items: picked.map((_, i) => ({ n: i + 1, sent: false })) };
         try {
-          for (let i = 0; i < picked.length; i++) await putBlob(b.id + ":" + (i + 1), picked[i].blob);
+          for (let i = 0; i < picked.length; i++) {
+            await putBlob(b.id + ":" + (i + 1), picked[i].blob);
+            try { await putBlob("th:" + b.id + ":" + (i + 1), await shrink(picked[i].blob, THUMB, 0.7)); } catch (_) { /* thumbnails are optional */ }
+          }
         } catch (_) { toast("تعذّر حفظ الصور على الجهاز"); send.disabled = false; return; }
         const all = batches(); all.push(b); saveBatches(all);
         picked.forEach((p) => URL.revokeObjectURL(p.url));
         picked.length = 0;
         handle.close(false);
         toast("جارٍ رفع الصور...");
-        const repaint = () => document.querySelectorAll(".panel.photos").forEach((x) => x.replaceWith(panel(t)));
+        const repaint = () => document.querySelectorAll(".panel.photos").forEach((x) => x.replaceWith(panel(t, kinds)));
         repaint();
         await flush(false);
         repaint();
@@ -289,14 +335,15 @@
             el("button", { type: "button", class: "btn-ghost", text: "رجوع", onclick: () => { confirmBox.hidden = true; } })));
       });
 
-      body.append(el("div", { class: "form" }, count, grid, input, el("div", { class: "req-btns" }, add), confirmBox, el("div", { class: "ovl-foot" }, send)));
+      body.append(el("div", { class: "form" }, count, grid, input, el("div", { class: "req-btns" }, add),
+        el("label", { class: "fld" }, el("span", { text: "تعليق" }), comment), confirmBox, el("div", { class: "ovl-foot" }, send)));
       paint();
     });
   }
 
   window.AshyadPhotos = {
     init(c) { ctx = c; },
-    panel: (t) => panel(t),
+    panel: (t, kinds) => panel(t, kinds),
     flush, reconcile, list,
     card: (b, i) => card(ctx.api().el, ctx.api().fmtTime, b, i)
   };
