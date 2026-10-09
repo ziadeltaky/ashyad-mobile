@@ -450,6 +450,8 @@
       kpi(stale ? "warn" : "", stale, `راكدة (+${state.snap.staleDays || 7} يوم)`, () => go("stages"), null, 1),
       kpi("", pending, "طلباتي المعلّقة", () => go("requests"), pending ? el("em", { text: "!" }) : null, 2));
 
+    const P = window.AshyadPrefs ? AshyadPrefs.get() : { showKpis: true, showStats: true, showMenu: true };
+    const statsEl = homeStats(rows, done, stale);
     const menu = el("div", { class: "menu" });
     HOME_TILES.forEach((t, i) => {
       const ready = ["stages", "list", "requests"].includes(t.key) || !!(window.ASHYAD_TOOLS || {})[t.key];
@@ -462,7 +464,76 @@
     });
     menu.querySelectorAll(".row > svg").forEach((s) => s.classList.add("chev"));
 
-    view.append(el("div", { class: "dash" }, hero, kpis, el("div", { class: "sec-t", text: "الأقسام" }), menu));
+    view.append(el("div", { class: "dash" }, hero, P.showKpis ? kpis : null,
+      P.showStats ? [el("div", { class: "sec-t", text: "إحصائيات" }), statsEl] : null,
+      P.showMenu ? [el("div", { class: "sec-t", text: "الأقسام" }), menu] : null));
+  }
+
+  /** counts of one field, biggest first: [[label, n], ...] */
+  function tally(rows, pick, limit) {
+    const m = new Map();
+    rows.forEach((r) => { const k = pick(r.t); if (k) m.set(k, (m.get(k) || 0) + 1); });
+    return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ar")).slice(0, limit);
+  }
+
+  function bars(list, colorOf) {
+    const max = Math.max(1, ...list.map((x) => x[1]));
+    return el("div", { class: "hb" }, list.map(([label, n], i) =>
+      el("div", { class: "hb-r" }, el("span", { text: label }), el("b", { text: n }),
+        el("div", { class: "tr" }, el("i", { style: `--w:${Math.max(4, (n / max) * 100)}%;--c:${colorOf ? colorOf(label) : "var(--primary-2)"};animation-delay:${i * 70}ms` })))));
+  }
+
+  function homeStats(rows, done, stale) {
+    const total = rows.length;
+    const grid = el("div", { class: "stats" });
+    if (!total) { grid.append(el("div", { class: "sc wide" }, el("span", { class: "sub", text: "لا توجد معاملات بعد." }))); return grid; }
+
+    // scanned or not
+    const R = 40, C = 2 * Math.PI * R, pct = Math.round((done / total) * 100);
+    const ring = svg(`<circle class="t" cx="50" cy="50" r="${R}"/><circle class="f" cx="50" cy="50" r="${R}" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - done / total)}"/>`, 92);
+    ring.setAttribute("viewBox", "0 0 100 100");
+    grid.append(el("div", { class: "sc wide" }, el("h4", { text: "حالة المسح" }),
+      el("div", { class: "donut" }, ring,
+        el("div", { class: "lg" }, el("b", { text: pct + "%" }),
+          el("span", {}, el("i", { style: "background:var(--green)" }), `تم المسح ${done}`),
+          el("span", {}, el("i", { style: "background:color-mix(in srgb,var(--amber) 55%,transparent)" }), `لم يتم المسح ${total - done}`)))));
+
+    // activity
+    const today = rows.filter((r) => r.t.daysInStep === 0).length;
+    const week = rows.filter((r) => r.t.daysInStep != null && r.t.daysInStep <= 6).length;
+    const ages = rows.map((r) => r.t.daysInStep).filter((d) => d != null);
+    const avg = ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) : 0;
+    grid.append(el("div", { class: "sc wide" }, el("h4", { text: "النشاط" }),
+      el("div", { class: "mini3" },
+        el("div", {}, el("b", { text: today }), el("span", { text: "تحرّكت اليوم" })),
+        el("div", {}, el("b", { text: week }), el("span", { text: "تحرّكت هذا الأسبوع" })),
+        el("div", { class: stale ? "w" : "" }, el("b", { text: stale }), el("span", { text: "راكدة" }))),
+      el("div", { class: "sub", text: `متوسط البقاء في المرحلة الحالية ${avg} يوم` })));
+
+    // stages
+    const stageColor = new Map(rows.map((r) => [r.t.stepName, color(r.t.phase)]));
+    grid.append(el("div", { class: "sc wide" }, el("h4", { text: "أكثر المراحل" }), bars(tally(rows, (t) => t.stepName, 5), (l) => stageColor.get(l))));
+
+    const cons = tally(rows, (t) => t.contractor, 4);
+    if (cons.length) grid.append(el("div", { class: "sc" }, el("h4", { text: "المقاولون" }), bars(cons)));
+    const hoods = tally(rows, (t) => t.neighborhood, 4);
+    if (hoods.length) grid.append(el("div", { class: "sc" }, el("h4", { text: "الأحياء" }), bars(hoods)));
+
+    // lengths and the other sections
+    const len = rows.reduce((a, r) => a + (Number(r.t.lengthM) || 0), 0);
+    const lenDone = rows.filter((r) => r.t.inspectionDone).reduce((a, r) => a + (Number(r.t.lengthM) || 0), 0);
+    const km = (m) => trimNum(Math.round(m / 10) / 100);
+    const extra = [];
+    const v = state.snap?.violations, q = state.snap?.quantities;
+    if (v) extra.push(el("div", {}, el("b", { text: trimNum(v.openAmount) }), el("span", { text: `مخالفات مفتوحة (${v.open}) ر.س` })));
+    if (q) extra.push(el("div", {}, el("b", { text: trimNum(q.thisMonthM) }), el("span", { text: "أمتار هذا الشهر" })));
+    grid.append(el("div", { class: "sc wide" }, el("h4", { text: "الأطوال" }),
+      el("div", { class: "mini3" },
+        el("div", {}, el("b", { text: km(len) }), el("span", { text: "كم إجمالي المسارات" })),
+        el("div", {}, el("b", { text: km(lenDone) }), el("span", { text: "كم ممسوحة" })),
+        el("div", {}, el("b", { text: km(len - lenDone) }), el("span", { text: "كم بلا مسح" }))),
+      extra.length ? el("div", { class: "mini3", style: "grid-template-columns:repeat(" + extra.length + ",1fr);margin-top:6px" }, extra) : null));
+    return grid;
   }
 
   function ripple(e) {
@@ -637,7 +708,7 @@
   }
 
   function api() {
-    return { el, svg, icon, store, toast, norm, state, fmtTime, trimNum, go, ripple, KEY, myRequests };
+    return { el, svg, icon, store, toast, norm, state, fmtTime, trimNum, go, ripple, KEY, myRequests, rerender: () => { if (state.snap && state.tab === "home") render(); } };
   }
 
   if (window.AshyadPhotos) AshyadPhotos.init({
@@ -742,6 +813,7 @@
     }));
 
     $("refresh").addEventListener("click", () => refresh(true, ""));
+    $("settings").addEventListener("click", () => { if (window.AshyadPrefs) AshyadPrefs.open(api()); });
     $("signin").addEventListener("click", () => {
       $("login-msg").textContent = "";
       $("signin").disabled = true;
