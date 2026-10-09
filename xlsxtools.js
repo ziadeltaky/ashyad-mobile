@@ -265,7 +265,14 @@
   // ------------------------------------------------------------------ overlay screens (editors, pickers)
 
   const overlays = [];
-  window.addEventListener("popstate", () => { const top = overlays[overlays.length - 1]; if (top) top.close(true); });
+  let popTaken = false, ownPops = 0;
+  window.addEventListener("popstate", () => {
+    const top = overlays[overlays.length - 1];
+    popTaken = !!top || ownPops > 0;
+    if (ownPops > 0 && !top) ownPops--;
+    else if (top) top.close(true);
+    setTimeout(() => { popTaken = false; }, 0);
+  });
 
   function overlay(api, title, build) {
     const { el, svg } = api;
@@ -285,7 +292,7 @@
         overlays.splice(overlays.indexOf(handle), 1);
         box.classList.add("out");
         setTimeout(() => box.remove(), 180);
-        if (!fromPop) { try { history.back(); } catch (_) { /* ignore */ } }
+        if (!fromPop) { ownPops++; try { history.back(); } catch (_) { ownPops--; } }
       }
     };
     overlays.push(handle);
@@ -311,6 +318,6 @@
   window.AshyadX = {
     NS, Sheet, Book, CellText, columnOf, columnName, shiftRefs,
     parseTime, formatTime, oneTime, ymd, parseYmd, serial, pad, toLatinDigits,
-    download, share, canShareFiles, fileFrom, overlay, closeTop, suggestInput
+    download, share, canShareFiles, fileFrom, overlay, closeTop, suggestInput, popTaken: () => popTaken
   };
 })();

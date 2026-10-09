@@ -223,6 +223,7 @@
       if (changed && !(window.ASHYAD_TOOLS || {})[state.tab]) render();
       else paintTop();
       flushRequests(true);
+      if (window.AshyadPhotos) { AshyadPhotos.flush(true); AshyadPhotos.reconcile(snap); }
       if (manual) toast(changed ? "تم تحديث البيانات" : "البيانات محدّثة، لا جديد");
     } catch (e) {
       if (e instanceof AuthError) {
@@ -373,11 +374,23 @@
       autocomplete: "off", "aria-label": "بحث",
       oninput: (e) => { state.query = e.target.value; state.shown = PAGE; paint(); }
     });
-    view.append(el("div", { class: "search" }, el("label", {}, input, icon.search()), count), holder);
+    const seg = el("div", { class: "seg seg3" });
+    const opts = [["all", "الكل"], ["done", "تم المسح"], ["todo", "لم يتم المسح"]];
+    const segBtns = opts.map(([k, label]) => el("button", { type: "button", "data-k": k, onclick: () => { state.scan = k; state.shown = PAGE; paint(); } }, label));
+    seg.append(...segBtns);
+    view.append(el("div", { class: "search" }, el("label", {}, input, icon.search()), seg, count), holder);
 
     function paint() {
       const words = norm(state.query).split(/\s+/).filter(Boolean);
-      const list = state.rows.filter((r) => words.every((w) => r.blob.includes(w)))
+      const scan = state.scan || "all";
+      const byWords = state.rows.filter((r) => words.every((w) => r.blob.includes(w)));
+      const nDone = byWords.filter((r) => r.t.inspectionDone).length;
+      segBtns.forEach((b) => {
+        const k = b.dataset.k;
+        b.classList.toggle("on", k === scan);
+        b.textContent = opts.find((o) => o[0] === k)[1] + " (" + (k === "all" ? byWords.length : k === "done" ? nDone : byWords.length - nDone) + ")";
+      });
+      const list = byWords.filter((r) => scan === "all" || (scan === "done") === !!r.t.inspectionDone)
         .sort((a, b) => a.t.code.localeCompare(b.t.code));
       count.textContent = words.length ? `${list.length} من ${state.rows.length} معاملة` : `${list.length} معاملة`;
       holder.replaceChildren();
@@ -531,9 +544,10 @@
 
   function renderRequests(view) {
     const list = myRequests().slice().reverse();
-    if (!list.length) {
+    const pics = window.AshyadPhotos ? AshyadPhotos.list() : [];
+    if (!list.length && !pics.length) {
       view.append(el("div", { class: "empty" }, icon.inbox(), el("p", { text: "لا توجد طلبات بعد." }),
-        el("small", { text: "افتح أي معاملة واضغط «طلب تقديم» أو «طلب إرجاع»." })));
+        el("small", { text: "افتح أي معاملة واضغط «طلب تقديم» أو «طلب إرجاع»، أو ارفع صورها." })));
       return;
     }
     view.append(el("div", { class: "count", text: "اضغط زر التحديث بالأعلى لمعرفة قرار الديسك توب." }));
@@ -550,6 +564,10 @@
         !r.sent && !q ? el("button", { class: "mini", type: "button", text: "إرسال الآن", onclick: () => flushRequests(false) }) : null));
     });
     view.append(wrap);
+    if (pics.length) {
+      view.append(el("div", { class: "count", text: "الصور المرسلة" }));
+      view.append(el("div", { class: "cards" }, pics.map((b, i) => AshyadPhotos.card(b, i))));
+    }
   }
 
   function requestPanel(t) {
@@ -598,6 +616,14 @@
     return { el, svg, icon, store, toast, norm, state, fmtTime, trimNum, go, ripple, KEY, myRequests };
   }
 
+  if (window.AshyadPhotos) AshyadPhotos.init({
+    api,
+    getToken: () => { allowRedirect = false; return getToken(""); },
+    expire: () => { token = ""; },
+    owner: () => state.snap?.ownerEmail,
+    changed: () => { if (state.tab === "requests") render(); }
+  });
+
   // ---- details sheet
 
   function openSheet(t) {
@@ -642,6 +668,7 @@
     if (t.notes) body.append(el("div", { class: "panel" }, el("h3", { text: "ملاحظات" }), el("div", { class: "notes", text: t.notes })));
 
     body.append(requestPanel(t));
+    if (window.AshyadPhotos) body.append(AshyadPhotos.panel(t));
 
     const map = mapLink(t);
     if (map) body.append(el("a", { class: "map-btn", href: map, target: "_blank", rel: "noopener noreferrer" }, icon.pin(), "فتح الموقع على الخريطة"));
@@ -698,7 +725,7 @@
     });
 
     $("sheet").addEventListener("click", (e) => { if (e.target.hasAttribute("data-close")) history.back(); });
-    window.addEventListener("popstate", () => { if (!$("sheet").hidden) closeSheet(); });
+    window.addEventListener("popstate", () => { if (!$("sheet").hidden && !(window.AshyadX && AshyadX.popTaken())) closeSheet(); });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("sheet").hidden) history.back(); });
 
     document.querySelector(".top-logo").addEventListener("click", () => {

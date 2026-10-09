@@ -434,3 +434,16 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .fileline { background: #fff; border-radius: 12px; padding: 12px; text-align: center; font-weight: 800; color: var(--primary); direction: ltr; }
 @keyframes slideIn { from { transform: translateX(-30px); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes slideOut { to { transform: translateX(-30px); opacity: 0; } }
+
+/* ---- photos */
+.photos .req-btns { display: flex; gap: 8px; }
+.photos .req-btns > button { flex: 1; }
+.ph-line { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; font-size: 14px; }
+.ph-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.ph-th { position: relative; aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: #e8ecf3; animation: pop .25s ease; }
+.ph-th img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ph-th button { position: absolute; top: 4px; inset-inline-start: 4px; width: 26px; height: 26px; border: 0; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; font-size: 18px; line-height: 1; }
+.ph-confirm { background: var(--amber-soft); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+
+.seg3 { grid-template-columns: 1fr 1fr 1fr; margin: 8px 0 4px; }
+.seg3 button { font-size: 13px; }
