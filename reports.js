@@ -19,7 +19,7 @@
     const data = api.state.snap?.violations;
     if (!data) {
       view.append(el("div", { class: "empty" }, icon.inbox(), el("p", { text: "لا توجد بيانات مخالفات." }),
-        el("small", { text: "تظهر بعد مزامنة الديسك توب إن كانت صلاحيتك تسمح بعرض المخالفات." })));
+        el("small", { text: "تظهر بعد مزامنة الإدارة إن كانت صلاحيتك تسمح بعرض المخالفات." })));
       return;
     }
     view.append(kpis(api, [
@@ -84,7 +84,7 @@
     const q = api.state.snap?.quantities;
     if (!q) {
       view.append(el("div", { class: "empty" }, icon.inbox(), el("p", { text: "لا توجد بيانات كميات." }),
-        el("small", { text: "تظهر بعد مزامنة الديسك توب إن كانت صلاحيتك تسمح بعرض الكميات." })));
+        el("small", { text: "تظهر بعد مزامنة الإدارة إن كانت صلاحيتك تسمح بعرض الكميات." })));
       return;
     }
     const m = (n) => api.trimNum(n) + " م";

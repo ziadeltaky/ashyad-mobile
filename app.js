@@ -231,7 +231,7 @@
         if (manual || !state.snap) { showLogin("سجّل الدخول بحساب جوجل للمتابعة.", true); }
         else state.problem = "انتهت جلسة الدخول. اضغط زر التحديث لتسجيل الدخول من جديد.";
       } else if (e instanceof NotFound) {
-        state.problem = "لم أجد ملف البيانات في Drive. تأكد أن المجلد مشارَك مع حسابك وأن الديسك توب رفع المزامنة.";
+        state.problem = "لم أجد ملف البيانات في Drive. تأكد أن المجلد مشارَك مع حسابك وأن الإدارة رفعت المزامنة.";
         store.del(KEY.file);
       } else if (e instanceof TypeError) {
         state.problem = "تعذّر الاتصال. تحقق من الإنترنت.";
@@ -273,7 +273,7 @@
     let err = !!text;
     if (!text && state.snap?.generatedAt) {
       const age = Date.now() - new Date(state.snap.generatedAt).getTime();
-      if (age > 6 * 3600 * 1000) text = "آخر مزامنة من الديسك توب كانت بتاريخ " + when + "؛ قد تكون البيانات قديمة.";
+      if (age > 6 * 3600 * 1000) text = "آخر مزامنة من الإدارة كانت بتاريخ " + when + "؛ قد تكون البيانات قديمة.";
     }
     banner.hidden = !text;
     banner.textContent = text || "";
@@ -556,7 +556,7 @@
   // ------------------------------------------------------------------ requests (advance / go back)
 
   const STATUS_TEXT = {
-    pending: ["بانتظار قرار الديسك توب", "wait"], applied: ["تم التنفيذ", "ok"], rejected: ["مرفوض", "no"], outdated: ["متقادم", "old"]
+    pending: ["بانتظار قرار الإدارة", "wait"], applied: ["تم التنفيذ", "ok"], rejected: ["مرفوض", "no"], outdated: ["متقادم", "old"]
   };
 
   function myRequests() {
@@ -624,7 +624,7 @@
           r.fileId = await sendRequest(r);
           r.sent = true;
           saveRequests(list);
-          if (!quiet) toast("تم إرسال الطلب إلى الديسك توب");
+          if (!quiet) toast("تم إرسال الطلب إلى الإدارة");
         } catch (e) {
           if (!quiet) toast(e.message === "expired" ? "انتهت الجلسة. اضغط التحديث لتسجيل الدخول ثم يُرسل الطلب." :
             /^(share|http)/.test(e.message) ? "تعذّر إرسال الطلب (" + e.message + ")" : e.message === "Failed to fetch" ? "لا يوجد اتصال. سيُرسل الطلب عند توفر الإنترنت." : e.message);
@@ -638,23 +638,28 @@
   }
 
   function renderRequests(view) {
-    const list = myRequests().slice().reverse();
+    // waiting ones first, finished ones below (each finished card carries a stamp)
+    const isDone = (r) => { const q = serverStatus(r); return !!q && q.status !== "pending"; };
+    const all = myRequests().slice().reverse();
+    const list = all.filter((r) => !isDone(r)).concat(all.filter(isDone));
     const pics = window.AshyadPhotos ? AshyadPhotos.list() : [];
     if (!list.length && !pics.length) {
       view.append(el("div", { class: "empty" }, icon.inbox(), el("p", { text: "لا توجد طلبات بعد." }),
         el("small", { text: "افتح أي معاملة واضغط «طلب تقديم» أو «طلب إرجاع»، أو ارفع صورها." })));
       return;
     }
-    view.append(el("div", { class: "count", text: "اضغط زر التحديث بالأعلى لمعرفة قرار الديسك توب." }));
+    view.append(el("div", { class: "count", text: "اضغط زر التحديث بالأعلى لمعرفة قرار الإدارة." }));
     const wrap = el("div", { class: "cards" });
     list.forEach((r, i) => {
       const q = serverStatus(r);
       const [text, cls] = q ? (STATUS_TEXT[q.status] || ["", "wait"]) : (r.sent ? ["تم الإرسال، بانتظار وصوله", "wait"] : ["لم يُرسل بعد (بانتظار الإنترنت)", "queue"]);
-      wrap.append(el("div", { class: "rq", style: `animation-delay:${Math.min(i, 8) * 30}ms` },
+      const stampText = q && q.status === "applied" ? "تم التنفيذ" : q && q.status === "rejected" ? "تم الرفض" : q && q.status === "outdated" ? "متقادم" : "";
+      wrap.append(el("div", { class: "rq" + (stampText ? " done st-" + q.status : ""), style: `animation-delay:${Math.min(i, 8) * 30}ms` },
+        stampText ? el("div", { class: "stamp", text: stampText }) : null,
         el("div", { class: "rq-top" }, el("b", { text: r.code }), el("span", { class: "chip2 " + cls, text: text })),
         el("div", { class: "rq-mid", text: (r.action === "back" ? "إرجاع" : "تقديم") + `: «${r.fromName || "—"}» ← «${r.toName}»` }),
         r.action === "back" && r.note ? el("div", { class: "rq-note", text: "السبب: " + r.note }) : null,
-        q?.note ? el("div", { class: "rq-note dec", text: "ملاحظة الديسك توب: " + q.note }) : null,
+        q?.note ? el("div", { class: "rq-note dec", text: "ملاحظة الإدارة: " + q.note }) : null,
         el("div", { class: "rq-time", text: fmtTime(r.createdAt.slice(0, 19)) }),
         !r.sent && !q ? el("button", { class: "mini", type: "button", text: "إرسال الآن", onclick: () => flushRequests(false) }) : null));
     });
@@ -703,7 +708,7 @@
     };
     if (t.nextId) buttons.append(el("button", { type: "button", class: "btn-main", text: "طلب تقديم إلى «" + t.nextName + "»", onclick: () => choose("advance") }));
     if (t.prevId) buttons.append(el("button", { type: "button", class: "btn-ghost warn", text: "طلب إرجاع إلى «" + t.prevName + "»", onclick: () => choose("back") }));
-    box.append(buttons, form, el("div", { class: "count", text: "الطلب يصل إلى الديسك توب ويُنفَّذ بعد موافقة المسؤول." }));
+    box.append(buttons, form, el("div", { class: "count", text: "الطلب يصل إلى الإدارة ويُنفَّذ بعد موافقة المسؤول." }));
     return box;
   }
 

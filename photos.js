@@ -1,5 +1,5 @@
-/* صور المعاملات: ضغط الصور على الجوال ثم رفعها إلى Drive ومشاركتها مع حساب الديسك توب.
-   بعد أن ينزّلها الديسك توب (ويكتب ذلك في snapshot.json) يحذفها الجوال من Drive فتتحرر المساحة. */
+/* صور المعاملات: ضغط الصور على الجوال ثم رفعها إلى Drive ومشاركتها مع حساب الإدارة.
+   بعد أن تنزّلها الإدارة (ويكتب ذلك في snapshot.json) يحذفها الجوال من Drive فتتحرر المساحة. */
 (() => {
   "use strict";
 
@@ -140,7 +140,7 @@
         }
         if (b.items.every((i) => i.sent) && !b.notified) {
           b.notified = true; saveAll();
-          if (!quiet) ctx.api().toast("تم رفع الصور وبانتظار الديسك توب");
+          if (!quiet) ctx.api().toast("تم رفع الصور وبانتظار الإدارة");
         }
       }
     } finally {
@@ -211,8 +211,8 @@
     if (sent < b.total) return [`جارٍ الرفع (${sent}/${b.total}) — بانتظار الإنترنت`, "queue"];
     if (b.status === "approved") return ["اعتُمد المسح", "ok"];
     if (b.status === "rejected") return ["مرفوض", "no"];
-    if (b.status === "received") return [b.kind === "survey" ? "وصلت، بانتظار اعتماد المسح" : "وصلت إلى الديسك توب", b.kind === "survey" ? "wait" : "ok"];
-    return ["تم الرفع، بانتظار الديسك توب", "wait"];
+    if (b.status === "received") return [b.kind === "survey" ? "وصلت، بانتظار اعتماد المسح" : "وصلت إلى الإدارة", b.kind === "survey" ? "wait" : "ok"];
+    return ["تم الرفع، بانتظار الإدارة", "wait"];
   }
 
   const list = () => batches().slice().reverse();
@@ -329,7 +329,7 @@
         if (!survey) { doSend(); return; }
         confirmBox.hidden = false;
         confirmBox.replaceChildren(
-          el("div", { class: "req-ask", text: `المعاملة ${t.code} ستُعدّ «تم مسحها» بعد أن يعتمد الديسك توب صور المسح.` }),
+          el("div", { class: "req-ask", text: `المعاملة ${t.code} ستُعدّ «تم مسحها» بعد أن تعتمد الإدارة صور المسح.` }),
           el("div", { class: "req-btns" },
             el("button", { type: "button", class: "btn-main", text: "تأكيد الإرسال", onclick: () => { confirmBox.hidden = true; doSend(); } }),
             el("button", { type: "button", class: "btn-ghost", text: "رجوع", onclick: () => { confirmBox.hidden = true; } })));

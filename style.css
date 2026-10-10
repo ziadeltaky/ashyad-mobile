@@ -749,3 +749,13 @@ html.no-motion *, html.no-motion *::before, html.no-motion *::after { animation:
   border: 1px solid var(--glass-line); box-shadow: var(--lg-shadow); }
 .pv-card b { font-size: 18px; color: var(--primary); }
 html[data-theme="dark"] .tabs { background-color: rgba(22, 18, 54, .9); }
+
+/* finished requests: dimmed, with a tilted stamp frame */
+.rq{position:relative}
+.rq.done{opacity:.82}
+.rq .stamp{position:absolute;left:14px;bottom:14px;transform:rotate(-9deg);border:3px solid currentColor;border-radius:10px;padding:2px 12px;font-weight:900;font-size:18px;letter-spacing:.5px;opacity:.88;pointer-events:none;background:transparent}
+.rq.st-applied .stamp{color:#1e9e4f}
+.rq.st-rejected .stamp{color:#c0392b}
+.rq.st-outdated .stamp{color:#7a7a8c}
+html[data-theme="dark"] .rq.st-applied .stamp{color:#4cd98a}
+html[data-theme="dark"] .rq.st-rejected .stamp{color:#ff7b6b}
