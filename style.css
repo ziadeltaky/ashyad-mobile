@@ -759,3 +759,9 @@ html[data-theme="dark"] .tabs { background-color: rgba(22, 18, 54, .9); }
 .rq.st-outdated .stamp{color:#7a7a8c}
 html[data-theme="dark"] .rq.st-applied .stamp{color:#4cd98a}
 html[data-theme="dark"] .rq.st-rejected .stamp{color:#ff7b6b}
+
+.ph-loc{display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:12px;border-radius:14px;background:var(--glass);border:1px solid var(--line,rgba(120,120,150,.25))}
+.ph-loc-t{font-weight:600;line-height:1.6}
+.ph-loc-t.ok{color:#1e9e4f}
+.ph-loc-t.bad{color:#c0392b}
+.ph-loc-t.wait{color:#b45309}

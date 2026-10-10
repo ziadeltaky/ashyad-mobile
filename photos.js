@@ -92,7 +92,7 @@
       const boundary = "ashyad" + newId();
       const meta = JSON.stringify({
         name: `ashyad-photo-${b.id}-${item.n}.jpg`, mimeType: "image/jpeg",
-        properties: { batch: b.id, n: String(item.n), total: String(b.total), kind: b.kind, tx: b.tx, code: b.code, note: (b.comment || "").slice(0, 50) }
+        properties: { batch: b.id, n: String(item.n), total: String(b.total), kind: b.kind, tx: b.tx, code: b.code, note: (b.comment || "").slice(0, 50), ...(b.loc ? { lat: b.loc.lat.toFixed(6), lng: b.loc.lng.toFixed(6), acc: b.loc.acc.toFixed(1) } : {}) }
       });
       const body = new Blob([`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: image/jpeg\r\n\r\n`, blob, `\r\n--${boundary}--`]);
       const up = guard(await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", {
@@ -269,6 +269,16 @@
     const { el, toast } = api;
     const survey = kind === "survey";
     const picked = []; // {blob, url}
+    const NEED_ACC = 8;      // meters: survey photos are accepted only with a GPS fix this exact
+    const FRESH_MS = 120000; // and not older than two minutes when sent
+    const geo = { best: null, err: "", watch: null };
+    const dist = (a, b, c, d) => {
+      const R = 6371000, rad = (x) => x * Math.PI / 180, dl = rad(c - a), dg = rad(d - b);
+      const h = Math.sin(dl / 2) ** 2 + Math.cos(rad(a)) * Math.cos(rad(c)) * Math.sin(dg / 2) ** 2;
+      return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+    };
+    const fmtDist = (m) => (m < 1000 ? Math.round(m) + " م" : (m / 1000).toFixed(1) + " كم");
+    const locOk = () => !survey || (!!geo.best && geo.best.acc <= NEED_ACC && Date.now() - geo.best.at <= FRESH_MS);
     window.AshyadX.overlay(api, `${KINDS[kind]} — ${t.code}`, (body, handle) => {
       const grid = el("div", { class: "ph-grid" });
       const count = el("div", { class: "count" });
@@ -278,6 +288,41 @@
       const confirmBox = el("div", { class: "ph-confirm", hidden: "" });
       const comment = el("input", { type: "text", maxlength: "50", "aria-label": "تعليق" });
 
+      const locBox = el("div", { class: "ph-loc" });
+      const locBtn = el("button", { type: "button", class: "mini", text: "إعادة تحديد الموقع" });
+      const stopGeo = () => { if (geo.watch != null) { try { navigator.geolocation.clearWatch(geo.watch); } catch (_) { /* ignore */ } geo.watch = null; } };
+      const startGeo = () => {
+        stopGeo();
+        geo.best = null; geo.err = "";
+        if (!navigator.geolocation) { geo.err = "unsupported"; paintLoc(); return; }
+        geo.watch = navigator.geolocation.watchPosition((pos) => {
+          const c = pos.coords, now = Date.now();
+          if (!geo.best || c.accuracy <= geo.best.acc || now - geo.best.at > 60000)
+            geo.best = { lat: c.latitude, lng: c.longitude, acc: c.accuracy, at: now };
+          geo.err = ""; paintLoc(); paint();
+        }, (e) => { geo.err = e.code === 1 ? "denied" : e.code === 3 ? "slow" : "err"; paintLoc(); },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+      };
+      function paintLoc() {
+        if (!survey) return;
+        const g = geo.best, ok = locOk();
+        let msg, cls = "wait";
+        if (geo.err === "denied") { msg = "الموقع مرفوض. فعّل إذن الموقع لهذا الموقع من إعدادات المتصفح (وخدمة الموقع في الجوال) ثم اضغط «إعادة تحديد الموقع»."; cls = "bad"; }
+        else if (geo.err === "unsupported") { msg = "هذا المتصفح لا يدعم تحديد الموقع، فلا يمكن إرسال صور المسح منه."; cls = "bad"; }
+        else if (ok) { cls = "ok"; msg = `📍 تم تحديد موقعك ✔ (دقة ±${g.acc.toFixed(1)} م)`; }
+        else if (g && Date.now() - g.at > FRESH_MS) msg = "انتهت صلاحية الموقع، اضغط «إعادة تحديد الموقع».";
+        else if (g) msg = `📍 جارٍ تحسين الدقة... الحالية ±${g.acc.toFixed(1)} م والمطلوب ${NEED_ACC} م أو أقل. قف في مكان مكشوف للسماء وانتظر.`;
+        else msg = geo.err === "slow" ? "تأخر تحديد الموقع... تأكد من تشغيل خدمة الموقع (GPS) وقف في مكان مكشوف." : "📍 جارٍ تحديد موقعك...";
+        const kids = [el("div", { class: "ph-loc-t " + cls, text: msg })];
+        if (ok) {
+          kids.push(el("div", { class: "count", text: (t.latitude != null && t.longitude != null)
+            ? `المسافة بينك وبين موقع المعاملة: ${fmtDist(dist(g.lat, g.lng, Number(t.latitude), Number(t.longitude)))}`
+            : "لا يوجد موقع مسجّل للمعاملة؛ سيُسجَّل موقعك كموقع لها عند اعتماد الإدارة." }));
+        }
+        kids.push(locBtn);
+        locBox.replaceChildren(...kids);
+      }
+      locBtn.addEventListener("click", () => { startGeo(); });
       const paint = () => {
         grid.replaceChildren(...picked.map((p, i) => el("div", { class: "ph-th" },
           el("img", { src: p.url, alt: "" }),
@@ -285,7 +330,7 @@
         const n = picked.length;
         count.textContent = survey ? `${n} من ${MAX} (الحد الأدنى ${MIN_SURVEY})` : `${n} من ${MAX}`;
         add.disabled = n >= MAX;
-        send.disabled = survey ? n < MIN_SURVEY : n < 1;
+        send.disabled = survey ? (n < MIN_SURVEY || !locOk()) : n < 1;
       };
 
       add.addEventListener("click", () => input.click());
@@ -303,8 +348,9 @@
       });
 
       const doSend = async () => {
+        if (!locOk()) { toast("الموقع غير جاهز أو انتهت صلاحيته"); paintLoc(); paint(); return; }
         send.disabled = true;
-        const b = { id: newId(), tx: t.id, code: t.code, kind, total: picked.length, comment: comment.value.trim(), createdAt: (() => {
+        const b = { id: newId(), tx: t.id, code: t.code, kind, total: picked.length, comment: comment.value.trim(), loc: survey ? { lat: geo.best.lat, lng: geo.best.lng, acc: geo.best.acc } : undefined, createdAt: (() => {
           const d = new Date(), p = (n) => String(n).padStart(2, "0");
           return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
         })(), items: picked.map((_, i) => ({ n: i + 1, sent: false })) };
@@ -317,6 +363,7 @@
         const all = batches(); all.push(b); saveBatches(all);
         picked.forEach((p) => URL.revokeObjectURL(p.url));
         picked.length = 0;
+        stopGeo();
         handle.close(false);
         toast("جارٍ رفع الصور...");
         const repaint = () => document.querySelectorAll(".panel.photos").forEach((x) => x.replaceWith(panel(t, kinds)));
@@ -335,7 +382,11 @@
             el("button", { type: "button", class: "btn-ghost", text: "رجوع", onclick: () => { confirmBox.hidden = true; } })));
       });
 
-      body.append(el("div", { class: "form" }, count, grid, input, el("div", { class: "req-btns" }, add),
+      if (survey) {
+        startGeo();
+        const tick = setInterval(() => { if (handle.closed) { clearInterval(tick); stopGeo(); } else { paintLoc(); paint(); } }, 2000);
+      }
+      body.append(el("div", { class: "form" }, survey ? locBox : null, count, grid, input, el("div", { class: "req-btns" }, add),
         el("label", { class: "fld" }, el("span", { text: "تعليق" }), comment), confirmBox, el("div", { class: "ovl-foot" }, send)));
       paint();
     });
